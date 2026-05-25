@@ -1,0 +1,12 @@
+computer:
+  displayId: ""
+
+tasks:
+  - name: 打开浏览器并搜索
+    flow:
+      - aiAct: 按下 Windows 键
+      - aiAct: 输入 "Chrome" 并按回车
+      - aiAct: 按下 Ctrl+L 聚焦地址栏
+      - aiAct: 输入 "https://www.bing.com" 并按回车
+      - aiAct: 搜索 "今日天气"
+      - aiAssert: 结果显示天气信息
