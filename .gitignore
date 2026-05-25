@@ -1,6 +1,7 @@
 # Runtime output
 midscene_run/
 helper/midscene_run/
+.mid2yaml-history.json
 
 # Dependencies
 node_modules/
