@@ -1,0 +1,16 @@
+{
+  "name": "mid2yaml-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local helper API for Mid2YAML.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.19.0"
+  },
+  "devDependencies": {
+    "@midscene/cli": "latest"
+  }
+}
