@@ -189,7 +189,12 @@ button:disabled {
   color: #bcf2ce;
 }
 
-.status-offline,
+.status-offline {
+  border-color: rgba(255, 155, 142, 0.35);
+  background: rgba(164, 61, 53, 0.28);
+  color: #ffd0c8;
+}
+
 .status-error {
   border-color: rgba(255, 155, 142, 0.35);
   background: rgba(164, 61, 53, 0.28);
