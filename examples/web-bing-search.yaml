@@ -1,0 +1,11 @@
+web:
+  url: https://www.bing.com
+  viewportWidth: 1440
+  viewportHeight: 800
+  bridgeMode: false
+
+tasks:
+  - name: 搜索天气
+    flow:
+      - ai: "搜索 \"今日天气\""
+      - aiAssert: 结果显示天气信息
