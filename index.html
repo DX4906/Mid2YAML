@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mid2YAML</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Mid2YAML</h1>
+      <p>把自然语言测试意图转换为 Midscene.js YAML 工作流</p>
+    </div>
+    <div class="status-panel" aria-live="polite">
+      <span id="helperStatus" class="status-dot status-offline">本地助手未连接</span>
+      <span id="versionStatus" class="version-chip status-offline">Midscene: 未检测</span>
+    </div>
+  </header>
+
+  <nav class="tab-bar" aria-label="页面区域">
+    <button id="editorTabBtn" class="tab-button active" type="button" data-tab="editor">脚本与预览</button>
+    <button id="runnerTabBtn" class="tab-button" type="button" data-tab="runner">本地试运行</button>
+  </nav>
+
+  <main class="tab-host">
+    <div id="editorTab" class="tab-page active" role="tabpanel" aria-labelledby="editorTabBtn">
+      <section class="app-shell">
+        <section class="input-panel" aria-labelledby="inputTitle">
+          <div class="section-heading compact-heading">
+            <h2 id="inputTitle">脚本配置</h2>
+            <button id="resetBtn" class="ghost-button" type="button">重置</button>
+          </div>
+
+          <fieldset class="segmented-control">
+            <legend>目标平台</legend>
+            <label>
+              <input type="radio" name="platform" value="web" checked>
+              <span>Web</span>
+            </label>
+            <label>
+              <input type="radio" name="platform" value="computer">
+              <span>PC Desktop</span>
+            </label>
+          </fieldset>
+
+          <label class="field">
+            <span>任务名称</span>
+            <input id="taskName" type="text" value="搜索天气" autocomplete="off">
+          </label>
+
+          <div id="webFields" class="config-grid">
+            <label class="field wide">
+              <span>目标 URL</span>
+              <input id="webUrl" type="url" value="https://www.bing.com" placeholder="https://example.com">
+            </label>
+            <label class="field">
+              <span>视口宽度</span>
+              <input id="viewportWidth" type="number" min="320" max="7680" step="1" value="1440">
+            </label>
+            <label class="field">
+              <span>视口高度</span>
+              <input id="viewportHeight" type="number" min="240" max="4320" step="1" value="800">
+            </label>
+            <label class="field">
+              <span>桥接模式</span>
+              <select id="bridgeMode">
+                <option value="false">关闭</option>
+                <option value="newTabWithUrl">新建标签</option>
+                <option value="currentTab">当前标签</option>
+              </select>
+            </label>
+            <label class="check-field">
+              <input id="headed" type="checkbox">
+              <span>运行时显示浏览器窗口</span>
+            </label>
+          </div>
+
+          <div id="computerFields" class="config-grid hidden">
+            <label class="field">
+              <span>显示器 ID</span>
+              <input id="displayId" type="text" placeholder="留空使用主显示器">
+            </label>
+            <label class="field">
+              <span>系统提示</span>
+              <select id="osHint">
+                <option value="windows">Windows</option>
+                <option value="macos">macOS</option>
+                <option value="linux">Linux</option>
+              </select>
+            </label>
+            <p class="hint wide">桌面端会使用 <code>computer</code> 配置和 <code>aiAct</code> 步骤。</p>
+          </div>
+
+          <label class="field">
+            <span>执行步骤（每行一个步骤）</span>
+            <textarea id="stepsText" rows="5">搜索 "今日天气"</textarea>
+          </label>
+
+          <label class="field">
+            <span>断言（可选）</span>
+            <textarea id="assertion" rows="2">结果显示天气信息</textarea>
+          </label>
+        </section>
+
+        <section class="preview-panel" aria-labelledby="previewTitle">
+          <div class="section-heading compact-heading">
+            <div>
+              <h2 id="previewTitle">YAML 预览</h2>
+              <p id="validationMessage" class="validation-message">YAML 已就绪</p>
+            </div>
+            <div class="button-row">
+              <button id="saveYamlBtn" class="ghost-button" type="button" disabled>保存编辑</button>
+              <button id="copyBtn" type="button">复制</button>
+              <button id="downloadBtn" type="button">导出 .yaml</button>
+            </div>
+          </div>
+          <textarea id="yamlPreview" class="yaml-box" spellcheck="false" aria-label="YAML 预览与编辑"></textarea>
+        </section>
+      </section>
+    </div>
+
+    <div id="runnerTab" class="tab-page" role="tabpanel" aria-labelledby="runnerTabBtn">
+      <section class="runner-panel" aria-labelledby="runnerTitle">
+        <div class="runner-config-column">
+          <div class="section-heading compact-heading">
+            <div>
+              <h2 id="runnerTitle">本地检测与试运行</h2>
+              <p>在 <code>/helper</code> 下执行 <code>npm start</code> 启动 server.js后，可检测 Midscene 并运行当前YAML</p>
+            </div>
+          </div>
+
+          <div class="button-row runner-actions">
+            <button id="checkHelperBtn" type="button">检测助手</button>
+            <button id="checkVersionBtn" type="button">检测 Midscene</button>
+            <button id="runBtn" type="button">运行 YAML</button>
+          </div>
+
+          <section class="model-config" aria-labelledby="modelConfigTitle">
+            <div class="subsection-heading">
+              <h3 id="modelConfigTitle">模型环境变量</h3>
+              <p>填写后仅对本次页面发起的 YAML 运行生效；API Key 不会保存到浏览器存储。</p>
+            </div>
+            <div class="model-grid">
+              <label class="field">
+                <span>MIDSCENE_MODEL_BASE_URL</span>
+                <input id="modelBaseUrl" type="url" placeholder="https://api.openai.com/v1">
+              </label>
+              <label class="field">
+                <span>MIDSCENE_MODEL_API_KEY</span>
+                <input id="modelApiKey" type="password" autocomplete="off" placeholder="sk-...">
+              </label>
+              <label class="field">
+                <span>MIDSCENE_MODEL_NAME</span>
+                <input id="modelName" type="text" autocomplete="off" placeholder="qwen3-vl-plus / gpt-4o / ...">
+              </label>
+              <label class="field">
+                <span>MIDSCENE_MODEL_FAMILY</span>
+                <input id="modelFamily" list="modelFamilyOptions" type="text" autocomplete="off" placeholder="qwen3-vl / gpt-5 / ...">
+                <datalist id="modelFamilyOptions">
+                  <option value="qwen3-vl"></option>
+                  <option value="qwen2.5-vl"></option>
+                  <option value="doubao-vision"></option>
+                  <option value="gemini"></option>
+                  <option value="gpt-4o"></option>
+                  <option value="gpt-5"></option>
+                  <option value="vlm-ui-tars"></option>
+                </datalist>
+              </label>
+              <label class="check-field wide">
+                <input id="dotenvOverride" type="checkbox">
+                <span>运行时添加 <code>--dotenv-override</code>，允许页面配置覆盖已有同名环境变量</span>
+              </label>
+            </div>
+          </section>
+
+          <div class="manual-command">
+            <span>手动运行：</span>
+            <code id="manualCommand">midscene ./mid2yaml-script.yaml</code>
+          </div>
+
+          <div class="result-grid">
+            <div>
+              <span class="result-label">退出码</span>
+              <strong id="exitCode">-</strong>
+            </div>
+            <div>
+              <span class="result-label">报告路径</span>
+              <strong id="reportPath">-</strong>
+            </div>
+          </div>
+        </div>
+
+        <section class="runner-log-column" aria-labelledby="executionLogTitle">
+          <div class="section-heading compact-heading">
+            <h2 id="executionLogTitle">执行日志</h2>
+          </div>
+          <pre id="executionLogBox"></pre>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
