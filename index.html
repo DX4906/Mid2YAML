@@ -21,6 +21,7 @@
   <nav class="tab-bar" aria-label="页面区域">
     <button id="editorTabBtn" class="tab-button active" type="button" data-tab="editor">脚本与预览</button>
     <button id="runnerTabBtn" class="tab-button" type="button" data-tab="runner">本地试运行</button>
+    <button id="historyTabBtn" class="tab-button" type="button" data-tab="history">历史运行记录</button>
   </nav>
 
   <main class="tab-host">
@@ -80,14 +81,6 @@
             <label class="field">
               <span>显示器 ID</span>
               <input id="displayId" type="text" placeholder="留空使用主显示器">
-            </label>
-            <label class="field">
-              <span>系统提示</span>
-              <select id="osHint">
-                <option value="windows">Windows</option>
-                <option value="macos">macOS</option>
-                <option value="linux">Linux</option>
-              </select>
             </label>
             <p class="hint wide">桌面端会使用 <code>computer</code> 配置和 <code>aiAct</code> 步骤。</p>
           </div>
@@ -156,16 +149,7 @@
               </label>
               <label class="field">
                 <span>MIDSCENE_MODEL_FAMILY</span>
-                <input id="modelFamily" list="modelFamilyOptions" type="text" autocomplete="off" placeholder="qwen3-vl / gpt-5 / ...">
-                <datalist id="modelFamilyOptions">
-                  <option value="qwen3-vl"></option>
-                  <option value="qwen2.5-vl"></option>
-                  <option value="doubao-vision"></option>
-                  <option value="gemini"></option>
-                  <option value="gpt-4o"></option>
-                  <option value="gpt-5"></option>
-                  <option value="vlm-ui-tars"></option>
-                </datalist>
+                <input id="modelFamily" type="text" autocomplete="off" placeholder="qwen3-vl / gpt-5 / ...">
               </label>
               <label class="check-field wide">
                 <input id="dotenvOverride" type="checkbox">
@@ -196,6 +180,38 @@
             <h2 id="executionLogTitle">执行日志</h2>
           </div>
           <pre id="executionLogBox"></pre>
+        </section>
+      </section>
+    </div>
+
+    <div id="historyTab" class="tab-page" role="tabpanel" aria-labelledby="historyTabBtn">
+      <section class="history-panel" aria-labelledby="historyTitle">
+        <section class="history-list-column" aria-labelledby="historyTitle">
+          <div class="section-heading compact-heading">
+            <div>
+              <h2 id="historyTitle">历史运行记录</h2>
+              <p id="historyStatus">启动本地 helper 后可读取项目历史记录。</p>
+            </div>
+            <button id="refreshHistoryBtn" class="ghost-button" type="button">刷新</button>
+          </div>
+          <div id="historyList" class="history-list" aria-live="polite"></div>
+        </section>
+
+        <section class="history-detail-column" aria-labelledby="historyDetailTitle">
+          <div class="section-heading compact-heading">
+            <div>
+              <h2 id="historyDetailTitle">YAML 回看</h2>
+              <p id="historyMeta" class="history-meta">请选择一条历史记录。</p>
+            </div>
+            <div class="button-row">
+              <button id="copyHistoryBtn" type="button" disabled>复制</button>
+              <button id="exportHistoryBtn" type="button" disabled>导出 .yaml</button>
+              <button id="rerunHistoryBtn" type="button" disabled>再次运行</button>
+              <button id="deleteHistoryBtn" class="danger-button" type="button" disabled>删除记录</button>
+            </div>
+          </div>
+          <p id="historyRerunHint" class="history-rerun-hint"></p>
+          <textarea id="historyYamlPreview" class="yaml-box" spellcheck="false" readonly aria-label="历史 YAML 内容"></textarea>
         </section>
       </section>
     </div>
