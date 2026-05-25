@@ -1,5 +1,6 @@
 const HELPER_BASE_URL = 'http://127.0.0.1:4317';
 const STORAGE_KEY = 'mid2yaml.formState.v1';
+const HISTORY_LOG_LIMIT = 12000;
 
 const defaultState = {
   platform: 'web',
@@ -12,8 +13,7 @@ const defaultState = {
     headed: false
   },
   computer: {
-    displayId: '',
-    osHint: 'windows'
+    displayId: ''
   },
   modelConfig: {
     baseUrl: '',
@@ -37,7 +37,6 @@ const els = {
   bridgeMode: document.querySelector('#bridgeMode'),
   headed: document.querySelector('#headed'),
   displayId: document.querySelector('#displayId'),
-  osHint: document.querySelector('#osHint'),
   modelBaseUrl: document.querySelector('#modelBaseUrl'),
   modelApiKey: document.querySelector('#modelApiKey'),
   modelName: document.querySelector('#modelName'),
@@ -57,7 +56,17 @@ const els = {
   resetBtn: document.querySelector('#resetBtn'),
   checkHelperBtn: document.querySelector('#checkHelperBtn'),
   checkVersionBtn: document.querySelector('#checkVersionBtn'),
-  runBtn: document.querySelector('#runBtn')
+  runBtn: document.querySelector('#runBtn'),
+  historyStatus: document.querySelector('#historyStatus'),
+  historyList: document.querySelector('#historyList'),
+  historyMeta: document.querySelector('#historyMeta'),
+  historyRerunHint: document.querySelector('#historyRerunHint'),
+  historyYamlPreview: document.querySelector('#historyYamlPreview'),
+  refreshHistoryBtn: document.querySelector('#refreshHistoryBtn'),
+  copyHistoryBtn: document.querySelector('#copyHistoryBtn'),
+  exportHistoryBtn: document.querySelector('#exportHistoryBtn'),
+  rerunHistoryBtn: document.querySelector('#rerunHistoryBtn'),
+  deleteHistoryBtn: document.querySelector('#deleteHistoryBtn')
 };
 
 let currentYaml = '';
@@ -67,6 +76,8 @@ let lastFormSignature = '';
 let lastGeneratedYaml = '';
 let yamlEditDirty = false;
 let yamlCustomized = false;
+let historyRecords = [];
+let selectedHistoryId = '';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -105,8 +116,7 @@ function readFormState() {
       headed: els.headed.checked
     },
     computer: {
-      displayId: els.displayId.value.trim(),
-      osHint: els.osHint.value
+      displayId: els.displayId.value.trim()
     },
     modelConfig: {
       baseUrl: els.modelBaseUrl.value.trim(),
@@ -129,7 +139,6 @@ function writeFormState(state) {
   els.bridgeMode.value = String(state.web.bridgeMode);
   els.headed.checked = Boolean(state.web.headed);
   els.displayId.value = state.computer.displayId;
-  els.osHint.value = state.computer.osHint;
   els.modelBaseUrl.value = state.modelConfig.baseUrl;
   els.modelApiKey.value = '';
   els.modelName.value = state.modelConfig.modelName;
@@ -303,6 +312,55 @@ function formatExecutionLog(stdout = '', stderr = '') {
   return sections.join('\n\n') || '暂无输出';
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function platformLabel(platform) {
+  return platform === 'computer' ? 'PC Desktop' : 'Web';
+}
+
+function safeFilename(value) {
+  return (value || 'mid2yaml-script')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 48) || 'mid2yaml-script';
+}
+
+function buildHistoryLog(data = {}) {
+  return formatExecutionLog(data.stdout, data.stderr).slice(0, HISTORY_LOG_LIMIT);
+}
+
+function setHistoryStatus(message, isError = false) {
+  els.historyStatus.textContent = message;
+  els.historyStatus.classList.toggle('error-text', isError);
+}
+
+function createHistoryEmpty(message) {
+  const empty = document.createElement('div');
+  empty.className = 'history-empty';
+  empty.textContent = message;
+  return empty;
+}
+
+function getSelectedHistoryRecord() {
+  return historyRecords.find(record => record.id === selectedHistoryId) || null;
+}
+
+function getHistoryRerunBlockers() {
+  if (!getSelectedHistoryRecord()) {
+    return ['请选择一条历史记录'];
+  }
+  return getRunReadiness(readFormState()).reasons;
+}
+
 function updateYamlSaveButton() {
   els.saveYamlBtn.disabled = !yamlEditDirty;
 }
@@ -364,6 +422,7 @@ function updatePreview() {
   els.runBtn.disabled = errors.length > 0 || !runReadiness.ready || yamlEditDirty;
   els.runBtn.title = runReasons.length ? runReasons.join('；') : '';
   updateModelEnvSummary(state);
+  renderHistoryDetail();
   persistState(state);
 }
 
@@ -407,6 +466,9 @@ function switchTab(tabName) {
   document.querySelectorAll('.tab-page').forEach(page => {
     page.classList.toggle('active', page.id === `${tabName}Tab`);
   });
+  if (tabName === 'history') {
+    loadHistoryRecords();
+  }
 }
 
 function setHelperStatus(status, message) {
@@ -430,10 +492,7 @@ async function copyYaml() {
 
 function downloadYaml() {
   const state = readFormState();
-  const filenameBase = (state.taskName || 'mid2yaml-script')
-    .replace(/[\\/:*?"<>|]/g, '-')
-    .replace(/\s+/g, '-')
-    .slice(0, 48) || 'mid2yaml-script';
+  const filenameBase = safeFilename(state.taskName);
   const blob = new Blob([currentYaml], { type: 'application/x-yaml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -494,6 +553,240 @@ async function checkVersion() {
   }
 }
 
+function renderHistoryList() {
+  els.historyList.replaceChildren();
+
+  if (!historyRecords.length) {
+    els.historyList.append(createHistoryEmpty('暂无历史运行记录。'));
+    return;
+  }
+
+  historyRecords.forEach(record => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'history-item';
+    button.classList.toggle('active', record.id === selectedHistoryId);
+    button.dataset.id = record.id;
+
+    const header = document.createElement('span');
+    header.className = 'history-item-header';
+
+    const title = document.createElement('strong');
+    title.textContent = record.taskName || 'Untitled run';
+
+    const type = document.createElement('span');
+    type.className = `history-type history-type-${record.platform === 'computer' ? 'computer' : 'web'}`;
+    type.textContent = platformLabel(record.platform);
+
+    header.append(title, type);
+
+    const meta = document.createElement('span');
+    meta.className = 'history-item-meta';
+    meta.textContent = `最后运行：${formatDateTime(record.lastRunAt)} · ${record.runCount || 1} 次 · 退出码 ${record.lastExitCode ?? '-'}`;
+
+    const report = document.createElement('span');
+    report.className = 'history-item-report';
+    report.textContent = record.lastReportPath || '无报告路径';
+
+    button.append(header, meta, report);
+    button.addEventListener('click', () => selectHistoryRecord(record.id));
+    els.historyList.append(button);
+  });
+}
+
+function renderHistoryDetail() {
+  const record = getSelectedHistoryRecord();
+  const hasRecord = Boolean(record);
+  const rerunBlockers = getHistoryRerunBlockers();
+  els.copyHistoryBtn.disabled = !hasRecord;
+  els.exportHistoryBtn.disabled = !hasRecord;
+  els.rerunHistoryBtn.disabled = rerunBlockers.length > 0;
+  els.rerunHistoryBtn.title = rerunBlockers.length ? rerunBlockers.join('；') : '';
+  els.deleteHistoryBtn.disabled = !hasRecord;
+  els.historyRerunHint.textContent = hasRecord && rerunBlockers.length
+    ? `再次运行需先满足：${rerunBlockers.join('；')}`
+    : '';
+
+  if (!record) {
+    els.historyMeta.textContent = '请选择一条历史记录。';
+    els.historyYamlPreview.value = '';
+    return;
+  }
+
+  els.historyMeta.textContent = `${platformLabel(record.platform)} · 最后运行 ${formatDateTime(record.lastRunAt)} · 运行 ${record.runCount || 1} 次`;
+  els.historyYamlPreview.value = record.yaml || '';
+}
+
+function selectHistoryRecord(id) {
+  selectedHistoryId = id;
+  renderHistoryList();
+  renderHistoryDetail();
+}
+
+async function loadHistoryRecords() {
+  try {
+    const data = await requestJson('/history/runs');
+    historyRecords = Array.isArray(data.records) ? data.records : [];
+    if (selectedHistoryId && !historyRecords.some(record => record.id === selectedHistoryId)) {
+      selectedHistoryId = '';
+    }
+    if (!selectedHistoryId && historyRecords.length) {
+      selectedHistoryId = historyRecords[0].id;
+    }
+    setHistoryStatus(`共 ${historyRecords.length} 条历史运行记录。`);
+    renderHistoryList();
+    renderHistoryDetail();
+    setHelperStatus('online', '本地助手已连接');
+  } catch (error) {
+    setHistoryStatus(error.message.includes('Failed to fetch') ? '本地 helper 未连接，无法读取历史记录。' : `读取历史失败：${error.message}`, true);
+    els.historyList.replaceChildren(createHistoryEmpty('无法读取历史记录。'));
+    renderHistoryDetail();
+  }
+}
+
+async function saveHistoryRecord(payload) {
+  const data = await requestJson('/history/runs', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  if (data.record) {
+    const existingIndex = historyRecords.findIndex(record => record.id === data.record.id);
+    if (existingIndex >= 0) {
+      historyRecords[existingIndex] = data.record;
+    } else {
+      historyRecords.unshift(data.record);
+    }
+    historyRecords.sort((a, b) => new Date(b.lastRunAt).getTime() - new Date(a.lastRunAt).getTime());
+    selectedHistoryId = data.record.id;
+    renderHistoryList();
+    renderHistoryDetail();
+    setHistoryStatus(`共 ${historyRecords.length} 条历史运行记录。`);
+  }
+}
+
+async function copyHistoryYaml() {
+  const record = getSelectedHistoryRecord();
+  if (!record) {
+    return;
+  }
+  await navigator.clipboard.writeText(record.yaml);
+  flashButton(els.copyHistoryBtn, '已复制');
+}
+
+function exportHistoryYaml() {
+  const record = getSelectedHistoryRecord();
+  if (!record) {
+    return;
+  }
+  const blob = new Blob([record.yaml], { type: 'application/x-yaml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${safeFilename(record.taskName)}.yaml`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function deleteSelectedHistoryRecord() {
+  const record = getSelectedHistoryRecord();
+  if (!record || !window.confirm(`删除历史记录「${record.taskName || 'Untitled run'}」？`)) {
+    return;
+  }
+
+  try {
+    await requestJson(`/history/runs/${encodeURIComponent(record.id)}`, { method: 'DELETE' });
+    historyRecords = historyRecords.filter(item => item.id !== record.id);
+    selectedHistoryId = historyRecords[0]?.id || '';
+    renderHistoryList();
+    renderHistoryDetail();
+    setHistoryStatus(`共 ${historyRecords.length} 条历史运行记录。`);
+  } catch (error) {
+    setHistoryStatus(`删除失败：${error.message}`, true);
+  }
+}
+
+function assertCanRunWithCurrentModelEnv() {
+  const state = readFormState();
+  const runReadiness = getRunReadiness(state);
+  if (!runReadiness.ready) {
+    throw new Error(runReadiness.reasons.join('\n'));
+  }
+  return state;
+}
+
+async function runYamlContent(yaml, runState, historyMeta) {
+  const data = await requestJson('/midscene/run', {
+    method: 'POST',
+    body: JSON.stringify({
+      yaml,
+      options: {
+        headed: historyMeta.platform === 'web' && Boolean(historyMeta.headed),
+        dotenvOverride: runState.modelConfig.dotenvOverride,
+        modelEnv: buildModelEnv(runState)
+      }
+    })
+  });
+
+  try {
+    await saveHistoryRecord({
+      yaml,
+      taskName: historyMeta.taskName,
+      platform: historyMeta.platform,
+      headed: historyMeta.headed,
+      lastExitCode: data.exitCode,
+      lastReportPath: data.reportPath || '',
+      lastLog: buildHistoryLog(data)
+    });
+  } catch (error) {
+    setHistoryStatus(`历史保存失败：${error.message}`, true);
+  }
+
+  return data;
+}
+
+async function rerunSelectedHistoryRecord() {
+  const record = getSelectedHistoryRecord();
+  if (!record) {
+    return;
+  }
+
+  let state;
+  try {
+    state = assertCanRunWithCurrentModelEnv();
+  } catch (error) {
+    els.executionLogBox.textContent = `[readiness]\n${error.message}`;
+    switchTab('runner');
+    updatePreview();
+    return;
+  }
+
+  els.rerunHistoryBtn.disabled = true;
+  els.executionLogBox.textContent = `再次运行历史记录：${record.taskName || 'Untitled run'}\n运行中...`;
+  els.exitCode.textContent = '-';
+  els.reportPath.textContent = '-';
+  switchTab('runner');
+
+  try {
+    const data = await runYamlContent(record.yaml, state, {
+      taskName: record.taskName,
+      platform: record.platform,
+      headed: record.headed
+    });
+    els.executionLogBox.textContent = formatExecutionLog(data.stdout, data.stderr);
+    els.exitCode.textContent = String(data.exitCode);
+    els.reportPath.textContent = data.reportPath || '-';
+    setHelperStatus('online', '本地助手已连接');
+  } catch (error) {
+    els.executionLogBox.textContent = `[error]\n${error.message}`;
+    els.exitCode.textContent = 'error';
+  } finally {
+    updatePreview();
+    renderHistoryDetail();
+  }
+}
+
 async function runYaml() {
   const state = readFormState();
   const errors = validateState(state);
@@ -519,16 +812,10 @@ async function runYaml() {
   els.reportPath.textContent = '-';
 
   try {
-    const data = await requestJson('/midscene/run', {
-      method: 'POST',
-      body: JSON.stringify({
-        yaml: currentYaml,
-        options: {
-          headed: state.platform === 'web' && state.web.headed,
-          dotenvOverride: state.modelConfig.dotenvOverride,
-          modelEnv: buildModelEnv(state)
-        }
-      })
+    const data = await runYamlContent(currentYaml, state, {
+      taskName: state.taskName || 'Midscene 自动化任务',
+      platform: state.platform,
+      headed: state.platform === 'web' && state.web.headed
     });
     els.executionLogBox.textContent = formatExecutionLog(data.stdout, data.stderr);
     els.exitCode.textContent = String(data.exitCode);
@@ -569,7 +856,6 @@ function bindEvents() {
     els.bridgeMode,
     els.headed,
     els.displayId,
-    els.osHint,
     els.modelBaseUrl,
     els.modelApiKey,
     els.modelName,
@@ -596,9 +882,15 @@ function bindEvents() {
   els.checkHelperBtn.addEventListener('click', checkHelper);
   els.checkVersionBtn.addEventListener('click', checkVersion);
   els.runBtn.addEventListener('click', runYaml);
+  els.refreshHistoryBtn.addEventListener('click', loadHistoryRecords);
+  els.copyHistoryBtn.addEventListener('click', copyHistoryYaml);
+  els.exportHistoryBtn.addEventListener('click', exportHistoryYaml);
+  els.rerunHistoryBtn.addEventListener('click', rerunSelectedHistoryRecord);
+  els.deleteHistoryBtn.addEventListener('click', deleteSelectedHistoryRecord);
 }
 
 bindEvents();
 writeFormState(loadState());
 updatePreview();
+renderHistoryDetail();
 checkVersion();
