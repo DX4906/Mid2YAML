@@ -1,6 +1,6 @@
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -9,12 +9,14 @@ const HOST = '127.0.0.1';
 const PORT = Number(process.env.MID2YAML_HELPER_PORT || 4317);
 const MAX_BODY_SIZE = 1024 * 1024;
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+const HISTORY_FILE = path.join(PROJECT_ROOT, '.mid2yaml-history.json');
+const MAX_HISTORY_LOG_LENGTH = 12000;
 
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body)
@@ -196,6 +198,94 @@ async function runMidsceneYaml(yaml, options) {
   }
 }
 
+function hashYaml(yaml) {
+  return createHash('sha256').update(yaml, 'utf8').digest('hex');
+}
+
+function normalizeHistoryRecord(record) {
+  return {
+    id: String(record.id || record.yamlHash || randomUUID()),
+    yamlHash: String(record.yamlHash || ''),
+    taskName: String(record.taskName || 'Untitled run'),
+    platform: record.platform === 'computer' ? 'computer' : 'web',
+    yaml: String(record.yaml || ''),
+    headed: Boolean(record.headed),
+    createdAt: String(record.createdAt || record.lastRunAt || new Date().toISOString()),
+    lastRunAt: String(record.lastRunAt || new Date().toISOString()),
+    runCount: Number.isFinite(Number(record.runCount)) ? Number(record.runCount) : 1,
+    lastExitCode: record.lastExitCode ?? null,
+    lastReportPath: String(record.lastReportPath || ''),
+    lastLog: String(record.lastLog || '').slice(0, MAX_HISTORY_LOG_LENGTH)
+  };
+}
+
+async function readHistoryRecords() {
+  try {
+    const raw = await fs.readFile(HISTORY_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter(record => record && typeof record === 'object')
+      .map(normalizeHistoryRecord)
+      .sort((a, b) => new Date(b.lastRunAt).getTime() - new Date(a.lastRunAt).getTime());
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function writeHistoryRecords(records) {
+  await fs.writeFile(HISTORY_FILE, `${JSON.stringify(records, null, 2)}\n`, 'utf8');
+}
+
+async function upsertHistoryRecord(payload) {
+  if (!payload || typeof payload !== 'object' || typeof payload.yaml !== 'string' || !payload.yaml.trim()) {
+    throw new Error('YAML content is required.');
+  }
+
+  const records = await readHistoryRecords();
+  const yamlHash = hashYaml(payload.yaml);
+  const existingIndex = records.findIndex(record => record.yamlHash === yamlHash);
+  const now = new Date().toISOString();
+  const existing = existingIndex >= 0 ? records[existingIndex] : null;
+  const nextRecord = normalizeHistoryRecord({
+    ...existing,
+    id: existing?.id || randomUUID(),
+    yamlHash,
+    taskName: payload.taskName,
+    platform: payload.platform,
+    yaml: payload.yaml,
+    headed: payload.headed,
+    createdAt: existing?.createdAt || now,
+    lastRunAt: now,
+    runCount: existing ? existing.runCount + 1 : 1,
+    lastExitCode: payload.lastExitCode ?? null,
+    lastReportPath: payload.lastReportPath,
+    lastLog: payload.lastLog
+  });
+
+  if (existingIndex >= 0) {
+    records[existingIndex] = nextRecord;
+  } else {
+    records.push(nextRecord);
+  }
+
+  records.sort((a, b) => new Date(b.lastRunAt).getTime() - new Date(a.lastRunAt).getTime());
+  await writeHistoryRecords(records);
+  return nextRecord;
+}
+
+async function deleteHistoryRecord(id) {
+  const records = await readHistoryRecords();
+  const nextRecords = records.filter(record => record.id !== id);
+  await writeHistoryRecords(nextRecords);
+  return records.length !== nextRecords.length;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     sendJson(res, 204, {});
@@ -220,6 +310,26 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const result = await runMidsceneYaml(body.yaml, body.options || {});
       sendJson(res, result.error ? 400 : 200, result);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/history/runs') {
+      const records = await readHistoryRecords();
+      sendJson(res, 200, { ok: true, records });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/history/runs') {
+      const body = await readJsonBody(req);
+      const record = await upsertHistoryRecord(body);
+      sendJson(res, 200, { ok: true, record });
+      return;
+    }
+
+    if (req.method === 'DELETE' && url.pathname.startsWith('/history/runs/')) {
+      const id = decodeURIComponent(url.pathname.slice('/history/runs/'.length));
+      const deleted = await deleteHistoryRecord(id);
+      sendJson(res, deleted ? 200 : 404, deleted ? { ok: true } : { ok: false, error: 'History record not found.' });
       return;
     }
 
