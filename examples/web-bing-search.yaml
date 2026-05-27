@@ -4,8 +4,15 @@ web:
   viewportHeight: 800
   bridgeMode: false
 
+agent:
+  testId: 搜索天气脚本
+
 tasks:
   - name: 搜索天气
     flow:
       - ai: "搜索 \"今日天气\""
+      - sleep: 100
+
+  - name: 检查结果
+    flow:
       - aiAssert: 结果显示天气信息

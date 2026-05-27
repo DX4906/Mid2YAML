@@ -1,12 +1,22 @@
 computer:
   displayId: ""
 
+agent:
+  testId: 桌面搜索脚本
+
 tasks:
   - name: 打开浏览器并搜索
     flow:
-      - aiAct: 按下 Windows 键
+      - aiKeyboardPress: ""
+        keyName: Meta
+      - sleep: 100
       - aiAct: 输入 "Chrome" 并按回车
-      - aiAct: 按下 Ctrl+L 聚焦地址栏
+      - sleep: 100
+      - aiKeyboardPress: ""
+        keyName: Control+L
+      - sleep: 100
       - aiAct: 输入 "https://www.bing.com" 并按回车
+      - sleep: 100
       - aiAct: 搜索 "今日天气"
+      - sleep: 100
       - aiAssert: 结果显示天气信息

@@ -11,6 +11,7 @@ const MAX_BODY_SIZE = 1024 * 1024;
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const HISTORY_FILE = path.join(PROJECT_ROOT, '.mid2yaml-history.json');
 const MAX_HISTORY_LOG_LENGTH = 12000;
+const activeRuns = new Map();
 
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload, null, 2);
@@ -57,6 +58,16 @@ function commandName(base) {
 function runCommand(command, args, options = {}) {
   return new Promise(resolve => {
     let child;
+    let settled = false;
+
+    function finish(result) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(result);
+    }
+
     try {
       child = spawn(command, args, {
         cwd: options.cwd || process.cwd(),
@@ -67,8 +78,11 @@ function runCommand(command, args, options = {}) {
         shell: process.platform === 'win32',
         windowsHide: true
       });
+      if (typeof options.onStart === 'function') {
+        options.onStart(child);
+      }
     } catch (error) {
-      resolve({
+      finish({
         ok: false,
         error: error.message,
         stdout: '',
@@ -88,7 +102,7 @@ function runCommand(command, args, options = {}) {
       stderr += chunk.toString();
     });
     child.on('error', error => {
-      resolve({
+      finish({
         ok: false,
         error: error.message,
         stdout,
@@ -97,7 +111,7 @@ function runCommand(command, args, options = {}) {
       });
     });
     child.on('close', exitCode => {
-      resolve({
+      finish({
         ok: exitCode === 0,
         stdout,
         stderr,
@@ -105,6 +119,38 @@ function runCommand(command, args, options = {}) {
       });
     });
   });
+}
+
+function stopProcessTree(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return false;
+  }
+
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore'
+    });
+    return true;
+  }
+
+  child.kill('SIGTERM');
+  setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+    }
+  }, 3000);
+  return true;
+}
+
+function stopMidsceneRun(runId) {
+  const activeRun = activeRuns.get(runId);
+  if (!activeRun) {
+    return false;
+  }
+
+  activeRun.stopped = true;
+  return stopProcessTree(activeRun.child);
 }
 
 function sanitizeModelEnv(modelEnv) {
@@ -157,10 +203,58 @@ function inferReportPath(stdout, stderr) {
   return jsonMatch ? jsonMatch[1].trim() : '';
 }
 
+function inferSummaryPath(stdout, stderr) {
+  const text = `${stdout}\n${stderr}`;
+  const summaryMatch = text.match(/Summary:\s*([A-Za-z]:\\[^\n\r]+?\.json|\/[^\n\r]+?\.json|\.{1,2}\/[^\n\r]+?\.json)/i);
+  return summaryMatch ? summaryMatch[1].trim() : '';
+}
+
+function addWarning(warnings, type, message) {
+  if (!warnings.some(warning => warning.type === type)) {
+    warnings.push({ type, message });
+  }
+}
+
+function analyzeRunWarnings(stdout, stderr) {
+  const text = `${stdout}\n${stderr}`;
+  const warnings = [];
+
+  if (/Mouse control may not be working/i.test(text)) {
+    addWarning(
+      warnings,
+      'mouse-control',
+      '检测到鼠标控制可能异常。桌面自动化可能受多显示器坐标、显示缩放或权限影响。'
+    );
+  }
+
+  if (/NOT running as Administrator/i.test(text)) {
+    addWarning(
+      warnings,
+      'windows-admin',
+      'Midscene 不是以管理员权限运行。Windows 可能阻止非管理员进程控制管理员权限应用。'
+    );
+  }
+
+  if (/empty content from AI model, using reasoning content/i.test(text)) {
+    addWarning(
+      warnings,
+      'model-reasoning-content',
+      '模型返回了空 content，Midscene 已回退使用 reasoning content；执行成功时通常无需处理。'
+    );
+  }
+
+  return warnings;
+}
+
 async function runMidsceneYaml(yaml, options) {
+  const runId = typeof options?.runId === 'string' && options.runId.trim()
+    ? options.runId.trim()
+    : randomUUID();
+
   if (!yaml || typeof yaml !== 'string') {
     return {
       ok: false,
+      runId,
       error: 'YAML content is required.',
       exitCode: null,
       stdout: '',
@@ -182,14 +276,28 @@ async function runMidsceneYaml(yaml, options) {
   try {
     const result = await runCommand(commandName('midscene'), args, {
       cwd: PROJECT_ROOT,
-      env: sanitizeModelEnv(options?.modelEnv)
+      env: sanitizeModelEnv(options?.modelEnv),
+      onStart(child) {
+        activeRuns.set(runId, {
+          child,
+          stopped: false
+        });
+      }
     });
+    const activeRun = activeRuns.get(runId);
+    const stopped = Boolean(activeRun?.stopped);
     return {
       ...result,
+      runId,
+      stopped,
+      ok: stopped ? false : result.ok,
       reportPath: inferReportPath(result.stdout, result.stderr),
+      summaryPath: inferSummaryPath(result.stdout, result.stderr),
+      warnings: analyzeRunWarnings(result.stdout, result.stderr),
       tempFile
     };
   } finally {
+    activeRuns.delete(runId);
     try {
       await fs.unlink(tempFile);
     } catch {
@@ -203,10 +311,12 @@ function hashYaml(yaml) {
 }
 
 function normalizeHistoryRecord(record) {
+  const scriptName = String(record.scriptName || record.taskName || 'Untitled run');
   return {
     id: String(record.id || record.yamlHash || randomUUID()),
     yamlHash: String(record.yamlHash || ''),
-    taskName: String(record.taskName || 'Untitled run'),
+    scriptName,
+    taskName: String(record.taskName || scriptName),
     platform: record.platform === 'computer' ? 'computer' : 'web',
     yaml: String(record.yaml || ''),
     headed: Boolean(record.headed),
@@ -256,7 +366,8 @@ async function upsertHistoryRecord(payload) {
     ...existing,
     id: existing?.id || randomUUID(),
     yamlHash,
-    taskName: payload.taskName,
+    scriptName: payload.scriptName || payload.taskName,
+    taskName: payload.taskName || payload.scriptName,
     platform: payload.platform,
     yaml: payload.yaml,
     headed: payload.headed,
@@ -310,6 +421,21 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const result = await runMidsceneYaml(body.yaml, body.options || {});
       sendJson(res, result.error ? 400 : 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/midscene/stop') {
+      const body = await readJsonBody(req);
+      const runId = typeof body.runId === 'string' ? body.runId.trim() : '';
+      if (!runId) {
+        sendJson(res, 400, { ok: false, error: 'runId is required.' });
+        return;
+      }
+
+      const stopped = stopMidsceneRun(runId);
+      sendJson(res, stopped ? 200 : 404, stopped
+        ? { ok: true, runId, stopped: true }
+        : { ok: false, runId, error: 'Running Midscene task not found.' });
       return;
     }
 

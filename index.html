@@ -9,7 +9,19 @@
 <body>
   <header class="app-header">
     <div>
-      <h1>Mid2YAML</h1>
+      <div class="brand-row">
+        <h1>Mid2YAML</h1>
+        <div class="brand-links" aria-label="外部链接">
+          <a class="brand-link midscene-link" href="https://midscenejs.com/" target="_blank" rel="noopener noreferrer" aria-label="打开 Midscene 官方网站" title="Midscene 官方网站">
+            <span aria-hidden="true"></span>
+          </a>
+          <a class="brand-link" href="https://github.com/DX4906/Mid2YAML" target="_blank" rel="noopener noreferrer" aria-label="打开 Mid2YAML GitHub 仓库" title="Mid2YAML GitHub 仓库">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.77.4.08.55-.18.55-.39 0-.19-.01-.84-.01-1.52-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.42 7.42 0 0 1 8 3.98c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.75.54 1.52 0 1.1-.01 1.98-.01 2.25 0 .21.15.47.55.39A8.11 8.11 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
+            </svg>
+          </a>
+        </div>
+      </div>
       <p>把自然语言测试意图转换为 Midscene.js YAML 工作流</p>
     </div>
     <div class="status-panel" aria-live="polite">
@@ -46,8 +58,8 @@
           </fieldset>
 
           <label class="field">
-            <span>任务名称</span>
-            <input id="taskName" type="text" value="搜索天气" autocomplete="off">
+            <span>脚本名称</span>
+            <input id="scriptName" type="text" value="搜索天气" autocomplete="off">
           </label>
 
           <div id="webFields" class="config-grid">
@@ -82,18 +94,18 @@
               <span>显示器 ID</span>
               <input id="displayId" type="text" placeholder="留空使用主显示器">
             </label>
-            <p class="hint wide">桌面端会使用 <code>computer</code> 配置和 <code>aiAct</code> 步骤。</p>
           </div>
 
-          <label class="field">
-            <span>执行步骤（每行一个步骤）</span>
-            <textarea id="stepsText" rows="5">搜索 "今日天气"</textarea>
-          </label>
-
-          <label class="field">
-            <span>断言（可选）</span>
-            <textarea id="assertion" rows="2">结果显示天气信息</textarea>
-          </label>
+          <section class="tasks-editor" aria-labelledby="tasksEditorTitle">
+            <div class="subsection-heading tasks-editor-heading">
+              <div>
+                <h3 id="tasksEditorTitle">任务列表</h3>
+                <p>每个任务会生成一个 Midscene YAML tasks 项。</p>
+              </div>
+              <button id="addTaskBtn" class="ghost-button" type="button">添加任务</button>
+            </div>
+            <div id="tasksList" class="tasks-list"></div>
+          </section>
         </section>
 
         <section class="preview-panel" aria-labelledby="previewTitle">
@@ -124,8 +136,6 @@
           </div>
 
           <div class="button-row runner-actions">
-            <button id="checkHelperBtn" type="button">检测助手</button>
-            <button id="checkVersionBtn" type="button">检测 Midscene</button>
             <button id="runBtn" type="button">运行 YAML</button>
           </div>
 
